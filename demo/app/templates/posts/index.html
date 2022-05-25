@@ -1,0 +1,21 @@
+{% extends 'base.html' %}
+
+<h1>{% block title %} Posts {% endblock %}</h1>
+
+{% block content %}
+    {% for post in posts %}
+        <article class="post">
+            <header>
+                <div>
+                  <h1>{{ post['title'] }}</h1>
+                  <div class="about">
+                      by {{ post['paper']['brand'] }}
+                      on {{ post['publish_time'] }}
+                  </div>
+                </div>
+            </header>
+            <p class="body">{{ post['summary'] }}</p>
+        </article>
+        {% if not loop.last %} <hr> {% endif %}
+    {% endfor %}
+{% endblock %}

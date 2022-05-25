@@ -1,0 +1,8 @@
+.idea/
+venv/
+.pytest_cache/
+.coverage
+*.py[cod]
+*.egg-info/
+*.egg
+.DS_Store

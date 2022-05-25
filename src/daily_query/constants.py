@@ -1,0 +1,4 @@
+
+# defaults
+FOREVER = "2021-05-01"
+FETCH_BATCH = 20

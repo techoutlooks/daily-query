@@ -1,12 +1,11 @@
-import datetime
 import pymongo
 
-from bson import ObjectId
-from daily_query.base import NoSQLDaily
-from daily_query.helpers import mk_date, parse_dates
+from daily_query import base
+from daily_query.helpers import parse_dates, isiterable
 from ordered_set import OrderedSet
 
-from .constants import *
+from .constants import \
+    FOREVER, FETCH_BATCH, DEFAULT_COLLECTION
 
 
 __all__ = ['PyMongo', 'Collection', 'MongoDaily']
@@ -15,7 +14,11 @@ __all__ = ['PyMongo', 'Collection', 'MongoDaily']
 class PyMongo:
     """
     Initializes a MongoDB using pymongo
+
     """
+    # FIXME: implement looping cursor/roow using with context manager
+    #   => refector funcs: distinct(), aggregate(), pipeline_exec(), etc.
+    #   https://preshing.com/20110920/the-python-with-statement-by-example/
 
     db = None
 
@@ -37,14 +40,15 @@ class PyMongo:
             self.db = mongo_client[db_name]
 
     def __del__(self):
-        if self.db:
-            self.db.client.close()
+        if self.db is not None:
+            # FIXME: raise InvalidOperation("Cannot use MongoClient after close")
+            # self.db.client.close()
             del self.db
 
 
-class Collection(PyMongo):
+class Collection(PyMongo, base.Collection):
     """
-    Raw access to MongoDB  collection enhanced.
+    Per-collection raw queries to MongoDB enhanced.
     Wraps a `pymongo.collection.Collection`.
 
     Use cases:
@@ -68,10 +72,12 @@ class Collection(PyMongo):
     #TODO inherit pymongo.Collection
     """
 
-    # cached
+    strict = True
+
+    # cached collection object
     _collection = None
 
-    def __init__(self, collection, db_or_uri=None):
+    def __init__(self, collection=None, db_or_uri=None, strict=True):
         """
         Initializes a collection from str or Collection object.
 
@@ -79,23 +85,24 @@ class Collection(PyMongo):
         :param str or pymongo.database.Database db_or_uri: database object or connection uri
             required if `collection` is str type.
         """
+
         if isinstance(collection, str):
-            assert db_or_uri, \
-                "if given as a string, collection requires valid `db_or_uri`"
+            assert db_or_uri is not None, \
+                "collection requires valid `db_or_uri` when specified as a string!"
 
         # case `Collection`: we're already set
         if isinstance(collection, (pymongo.collection.Collection, Collection)):
             self.collection = collection
             self.db = self.collection.database
+
         # case `pymongo.database.Database` or MongoClient uri: can be handled
-        # by `PyMongo.__init__()` which will be further set `self.db`
+        # by `PyMongo.__init__()` which will further set `self.db`
         else:
             super().__init__(db_or_uri)
-            self.collection = self.db[collection]
+            self.collection = self.db[collection or DEFAULT_COLLECTION]
 
     def __call__(self, collection):
         """ For quickly switching collection without changing of databse.
-
         :param collection: collection
         :type collection: str or pymongo.collection.Collection
         """
@@ -125,8 +132,11 @@ class Collection(PyMongo):
 
     @property
     def collection(self) -> pymongo.collection.Collection:
-        """ Returns the cached collection object 
-        """
+        """ Returns the cached collection object  """
+        # if self.strict:
+        #     assert self._collection.name != DEFAULT_COLLECTION, \
+        #         "strict=True forbids intializing a `Collection` with, " \
+        #         "`collection` keyword argument set to `None` !"
         return self._collection
 
     @collection.setter
@@ -150,8 +160,8 @@ class Collection(PyMongo):
     def count(self):
         return self.collection.count_documents({})
 
-    def find(self, filter=None, projection=None):
-        return self.collection.find(filter, projection)
+    def find(self, match=None, projection=None):
+        return self.collection.find(match, projection)
 
     def find_one(self, *args, **kwargs):
         return self.collection.find_one(*args, **kwargs)
@@ -164,53 +174,116 @@ class Collection(PyMongo):
     
     def update_or_create(self, defaults: dict, **kwargs):
         """ Similar to Django's `.update_or_create()`, tries to fetch an object
-        from the database based on **kwargs** filter. If mached, uses **defaults**
+        from the database based on **kwargs** match. If mached, uses **defaults**
         to update the object found, else to create a new object .
         """
 
-        filter = {k: {'$eq': v} for k,v in kwargs.items() }
+        match = {k: {'$eq': v} for k,v in kwargs.items() }
         return self.collection.find_one_and_update(
-            filter, {"$set": defaults}, upsert=True)
+            match, {"$set": defaults}, upsert=True)
+
+    def aggregate(self, *args, **kwargs):
+        return self.collection.aggregate(*args, **kwargs)
 
 
-class MongoDaily(PyMongo, NoSQLDaily):
+class MongoDaily(PyMongo, base.NoSQLDaily):
     """
     Query daily data seamlessly with MongoDB.
-    Enables database queries across several days.
-
+    Enables database queries across several day-collections.
     """
 
     db = None  # set by ancestor `PyMongo`
 
+    def distinct(self, field, **kwargs):
+        """
+        Emulate compound `db.*.distinct(field)` across all db collections.
+        Yields unique values for field
+        """
+
+        # pipeline_exec -> [{'_id': 'Education'}, ...]
+        pipeline = [{"$group": {"_id": f"${field}"}}]
+        r = self.pipeline_exec(pipeline, flatten=True, **kwargs)
+
+        # yield unique values for field
+        # breaks down iterable values
+        values = set()
+        for cursor in r:
+            for doc in cursor:
+                # assume value is always iterable, if not, make it so,
+                # that eases working with both situations
+                value = doc.pop("_id")
+                if not isiterable(value):
+                    value = value,
+                for v in value:
+                    if v not in values:
+                        values.add(v)
+                        yield v
+
     def search(self, flatten=False, **kwargs):
         """
-        Wrapper around `find()` that returns with objects/lists
-        instead of raw db cursors
+        Wrapper around `find()` that yields documents instead of raw db cursors
 
-        :param flatten: yields [doc, ...] instead of [(doc, col), ...]
-        :return: yields **(collection, doc)**
+        :param bool flatten: yields [doc, ...] instead of [(doc, col), ...]
+        :return yields **(collection, doc)**
              set flatten=True to yield **doc**
              **doc**: found doc, **col_name**: collection found doc belongs to.
         """
-        for cursor, col in list(self.find(**kwargs)):
+        for cursor, cursor_len, collection in list(self.find(**kwargs)):
             for doc in list(cursor):
-                yield (doc, col) \
-                    if not flatten else doc
+                yield (doc, collection) \
+                    if not flatten else base.Doc(collection, doc)
 
-    def find(self, days=None, days_from=FOREVER, days_to=None,
-             first=None, filter=None, fields=None, exclude=None, flatten=False):
+    def aggregate(self, *args, flatten=False, **kwargs):
         """
-        Find matching items across several collections (days).
+        Wrapper around `pipeline_exec()` that yields rows
+        instead of raw db cursors
+        :return yields (doc, collection)'s, or flattened docs if flatten==True
+        """
+
+        limit = kwargs.get('limit', FETCH_BATCH)
+        for cursor, cursor_len, collection in self.pipeline_exec(*args, **kwargs):
+            for row in list(cursor):
+                yield (row, collection) \
+                    if not flatten else row
+                limit -= 1
+                if limit <= 0:
+                    break
+
+    def find(self, match=None, flatten=False, limit=None, fields=None, exclude=None,
+            days=None, days_from=FOREVER, days_to=None):
+        """
+        Find matching items across collections (days), yield cursors.
+        Limit applied on entire collections set, NOT individual ones.
+
+        :param bool flatten: yields [doc, ...] instead of [(doc, col), ...]
+        :param limit: only first N documents across ALL filtered collections .
+        :param match: MongoDB document match. Applied to each of the filtered collections.
+        :param fields: fields to include (added to MongoDB projection).
+        :param exclude: fields to exclude (stripped from MongoDB projection)
+
+        """
+        pipeline = [{"$match": match or {}}]
+
+        projection = self._mk_projection(fields, exclude)
+        if projection:
+            pipeline += [{"$project": projection}]
+
+        return self.pipeline_exec(pipeline, flatten=flatten, limit=limit,
+                                  days=None, days_from=FOREVER, days_to=None)
+
+    def pipeline_exec(self, pipeline, *args, flatten=False, limit=FETCH_BATCH,
+                      days=None, days_from=FOREVER, days_to=None, **kwargs):
+        """
+        Run across several collections (days), yield entire cursors.
         Has defaults values for all kwargs.
         Nota: items are gathered per collections, one day at a time.
 
+        :param list or collections.abc.Iterable pipeline: mongo pipeline
+        :param bool flatten: yields [doc, ...] instead of [(doc, col), ...]
+        :param days: only items published on individual days
         :param days_from: only items published since `days_from` (default: `FOREVER`)
         :param days_to: only items published before `days_to` (default: **today**)
-
-        :param first: only first N documents across ALL filtered collections .
-        :param filter: MongoDB document filter. Applied to each of the filtered collections.
-        :param fields: fields to include (added to MongoDB projection).
-        :param exclude: fields to exclude (stripped from MongoDB projection)
+        :param limit: only first N documents across ALL filtered collections.
 
         :return: yields **(col, cursor)**
                  **cursor**: found docs,
@@ -219,23 +292,27 @@ class MongoDaily(PyMongo, NoSQLDaily):
         #FIXME: search in reverse order from `days_to` to `days_from`.
         """
 
-        limit = first or FETCH_BATCH
-        projection = self._mk_projection(fields, exclude)
-
-        collections, docs_count = self.get_collections(
+        collections, total_docs_count = self.get_collections(
             days=days, days_from=days_from, days_to=days_to)
-        limit = min(docs_count, limit)
+        _limit = min(total_docs_count, limit or FETCH_BATCH)
 
         for collection in collections:
-            cursor = collection.find(filter, projection).limit(limit)  # fix: this tak
-            yield (cursor, collection) \
+
+            pipe = pipeline(collection) if \
+                not isiterable(pipeline) else pipeline
+            cursor = collection.aggregate(pipe, *args, **kwargs)
+            cursor_len = len(cursor._CommandCursor__data)           # FIXME: dirty hack
+            yield (cursor, cursor_len, collection) \
                 if not flatten else cursor
 
+            # ==[ guard only to ensure that is not yielded  ]==
+            # ==[ more cursors than imposed by `limit`      ]==
             # optionally limit the results
-            # limit -= cursor.count()   method removed in MongDB v4
-            # cursor.retrieved == 0     since until cursor is retrieved, can't use
-            limit -= len(list(cursor.clone()))
-            if limit <= 0:
+            # _limit -= cursor.count()               method removed in MongDB v4
+            # cursor.retrieved == 0                 can't use, since stays 0 till cursor is enumerated,
+            # _limit -= len(list(cursor.clone()))    works NOT with CommandCursor returned by `.aggregate()`
+            _limit -= cursor_len
+            if _limit <= 0:
                 break
 
     def get_collections(self, days=[], days_from=None, days_to=None,
@@ -266,7 +343,9 @@ class MongoDaily(PyMongo, NoSQLDaily):
         return collections, docs_count
 
     def _mk_projection(self, fields=None, exclude=None):
-        """ Make MongoDB projection from field names """
+        """ 
+        Make MongoDB projection from field names 
+        """
         if not (fields or exclude):
             return
         fields_map = {f: 0 if f in exclude else 1 for f in fields}

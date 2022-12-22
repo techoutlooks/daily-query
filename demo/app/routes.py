@@ -12,7 +12,6 @@ def hello_world():
 
 @flask.current_app.route("/posts")
 def show_posts():
-    posts = []
     try:
         db = MongoDaily(get_db())
         posts = list(db.search(flatten=True))

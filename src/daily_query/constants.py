@@ -2,3 +2,4 @@
 # defaults
 FOREVER = "2021-05-01"
 FETCH_BATCH = 20
+DEFAULT_COLLECTION = "_default"

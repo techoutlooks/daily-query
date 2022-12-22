@@ -1,13 +1,26 @@
 import os
 import datetime
+import unicodedata
 
+import six
 from ordered_set import OrderedSet
 
 from daily_query.constants import FOREVER
 
-
 DATE_FORMAT = '%Y-%m-%d'
 DATETIME_FORMAT = f'{DATE_FORMAT} %H:%M:%S'
+
+
+__all__ = [
+
+    # text
+    'remove_diacritics',
+
+    # misc
+    'isiterable',
+    'get_env_variable',
+    'parse_dates', 'mk_datetime', 'mk_date'
+]
 
 
 mk_date = lambda x=None: mk_datetime(x, True)
@@ -22,7 +35,7 @@ def mk_datetime(input=None, date_only=False) -> datetime.datetime:
     """
     date_time = input
     if not input:
-        date_time = datetime.datetime.now()     # careful, now() is both datetime and date!
+        date_time = datetime.datetime.now()  # careful, now() is both datetime and date!
     if isinstance(date_time, datetime.date):
         if not isinstance(date_time, datetime.datetime):
             date_time = str(date_time)
@@ -70,3 +83,19 @@ def get_env_variable(name) -> str:
         message = "Expected environment variable '{}' not set.".format(name)
         raise Exception(message)
 
+
+def remove_diacritics(text):
+    """
+    Returns a string with all diacritics (aka non-spacing marks) removed.
+    For example "Héllô" will become "Hello".
+    Useful for comparing strings in an accent-insensitive fashion.
+    https://stackoverflow.com/a/35783136
+    """
+    normalized = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in normalized if unicodedata.category(c) != "Mn")
+
+
+def isiterable(obj):
+    """ Iterable, but not: string, dict """
+    return hasattr(obj, '__iter__') and \
+        not isinstance(obj, six.string_types)

@@ -61,6 +61,10 @@ def parse_dates(days=None, days_from=None, days_to=None, reverse=True) \
 
     days_range = []
 
+    # guard: converts ['None', 'None] => [None, None]
+    days_from, days_to = list(
+        map(lambda x: None if x == 'None' else x, [days_from, days_to]))
+
     if (days_from or days_to) or not days:
         start_date, end_date = mk_date(days_from or FOREVER), mk_date(days_to)
         assert start_date <= end_date, \

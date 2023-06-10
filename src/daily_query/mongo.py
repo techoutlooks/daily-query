@@ -8,7 +8,18 @@ from .constants import \
     FOREVER, FETCH_BATCH, DEFAULT_COLLECTION
 
 
-__all__ = ['PyMongo', 'Collection', 'MongoDaily']
+__all__ = ['PyMongo', 'Collection', 'MongoDaily', 'mkprojection']
+
+
+def mkprojection(fields=None, exclude=None):
+    """
+    Make MongoDB projection from field names
+    :param [str] fields:
+    """
+    if not (fields or exclude):
+        return
+    fields_map = {f: 0 if f in exclude else 1 for f in fields}
+    return fields_map
 
 
 class PyMongo:
@@ -171,16 +182,20 @@ class Collection(PyMongo, base.Collection):
 
     def insert_many(self, docs, **kwargs,):
         return self.collection.insert_many(docs, **kwargs)
-    
+
+    def update_many(self, *args, **kwargs, ):
+        return self.collection.update_many(*args, **kwargs)
+
     def update_or_create(self, defaults: dict, **kwargs):
         """ Similar to Django's `.update_or_create()`, tries to fetch an object
-        from the database based on **kwargs** match. If mached, uses **defaults**
+        from the database based on **kwargs** strict match. If mached, uses **defaults**
         to update the object found, else to create a new object .
         """
-
         match = {k: {'$eq': v} for k,v in kwargs.items() }
+        update = {**kwargs, **defaults}
+        del update['_id']   # MongoDB '_id' is immutable
         return self.collection.find_one_and_update(
-            match, {"$set": defaults}, upsert=True)
+            match, {"$set": update}, upsert=True, return_document=pymongo.ReturnDocument.AFTER)
 
     def aggregate(self, *args, **kwargs):
         return self.collection.aggregate(*args, **kwargs)
@@ -264,7 +279,7 @@ class MongoDaily(PyMongo, base.NoSQLDaily):
         """
         pipeline = [{"$match": match or {}}]
 
-        projection = self._mk_projection(fields, exclude)
+        projection = mkprojection(fields, exclude)
         if projection:
             pipeline += [{"$project": projection}]
 
@@ -341,14 +356,5 @@ class MongoDaily(PyMongo, base.NoSQLDaily):
             docs_count += collection.count()
 
         return collections, docs_count
-
-    def _mk_projection(self, fields=None, exclude=None):
-        """ 
-        Make MongoDB projection from field names 
-        """
-        if not (fields or exclude):
-            return
-        fields_map = {f: 0 if f in exclude else 1 for f in fields}
-        return fields_map
 
 

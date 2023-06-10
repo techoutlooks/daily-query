@@ -7,20 +7,15 @@ from ordered_set import OrderedSet
 
 from daily_query.constants import FOREVER
 
+
+__all__ = (
+    'isiterable',
+    'parse_dates', 'mk_datetime', 'mk_date'
+)
+
+
 DATE_FORMAT = '%Y-%m-%d'
 DATETIME_FORMAT = f'{DATE_FORMAT} %H:%M:%S'
-
-
-__all__ = [
-
-    # text
-    'remove_diacritics',
-
-    # misc
-    'isiterable',
-    'get_env_variable',
-    'parse_dates', 'mk_datetime', 'mk_date'
-]
 
 
 mk_date = lambda x=None: mk_datetime(x, True)
@@ -78,25 +73,6 @@ def parse_dates(days=None, days_from=None, days_to=None, reverse=True) \
     all_days.items.sort(reverse=reverse)
 
     return all_days
-
-
-def get_env_variable(name) -> str:
-    try:
-        return os.environ[name]
-    except KeyError:
-        message = "Expected environment variable '{}' not set.".format(name)
-        raise Exception(message)
-
-
-def remove_diacritics(text):
-    """
-    Returns a string with all diacritics (aka non-spacing marks) removed.
-    For example "Héllô" will become "Hello".
-    Useful for comparing strings in an accent-insensitive fashion.
-    https://stackoverflow.com/a/35783136
-    """
-    normalized = unicodedata.normalize("NFKD", text)
-    return "".join(c for c in normalized if unicodedata.category(c) != "Mn")
 
 
 def isiterable(obj):

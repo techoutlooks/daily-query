@@ -1,4 +1,7 @@
+from typing import Tuple, TypeVar, Mapping, Any, Iterable
+
 import pymongo
+from pymongo.results import UpdateResult
 
 from daily_query import base
 from daily_query.helpers import parse_dates, isiterable
@@ -8,13 +11,20 @@ from .constants import \
     FOREVER, FETCH_BATCH, DEFAULT_COLLECTION
 
 
-__all__ = ['PyMongo', 'Collection', 'MongoDaily', 'mkprojection']
+__all__ = (
+    'Doc', 'PyMongo', 'Collection', 'MongoDaily',
+    'mkprojection',
+)
+
+
+Doc = TypeVar("Doc", bound=Mapping[str, Any])
 
 
 def mkprojection(fields=None, exclude=None):
     """
     Make MongoDB projection from field names
-    :param [str] fields:
+    :param Iterable[str] fields: fields to include
+    :param Iterable[str] exclude: fields to exclude
     """
     if not (fields or exclude):
         return
@@ -186,16 +196,29 @@ class Collection(PyMongo, base.Collection):
     def update_many(self, *args, **kwargs, ):
         return self.collection.update_many(*args, **kwargs)
 
-    def update_or_create(self, defaults: dict, **kwargs):
+    def update_or_create(self, defaults: dict, transform=None, **kwargs) -> Tuple[Doc, UpdateResult]:
         """ Similar to Django's `.update_or_create()`, tries to fetch an object
-        from the database based on **kwargs** strict match. If mached, uses **defaults**
+        from the database based on **kwargs** strict match. If matched, uses **defaults**
         to update the object found, else to create a new object .
+
+        :param defaults: stage-1 update to perform
+        :param (Doc) -> void transform: Performs a two-staged update,
+            using data returned from the first stage to perform the second update.
         """
-        match = {k: {'$eq': v} for k,v in kwargs.items() }
+        result, doc_out = None, None
+
+        match = {k: {'$eq': v} for k, v in kwargs.items()}
         update = {**kwargs, **defaults}
         del update['_id']   # MongoDB '_id' is immutable
-        return self.collection.find_one_and_update(
+        doc = self.collection.find_one_and_update(
             match, {"$set": update}, upsert=True, return_document=pymongo.ReturnDocument.AFTER)
+
+        # apply transform, optionally
+        if transform and doc:
+            transform(doc)
+            result = self.update_one({'_id': doc['_id']}, {'$set': doc})
+
+        return doc, result
 
     def aggregate(self, *args, **kwargs):
         return self.collection.aggregate(*args, **kwargs)

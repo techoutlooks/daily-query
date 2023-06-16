@@ -1,0 +1,5 @@
+-e .
+Flask~=2.3.2
+flask_pymongo
+pymongo~=4.3.3
+setuptools~=65.5.1

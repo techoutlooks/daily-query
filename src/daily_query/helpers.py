@@ -1,10 +1,5 @@
-import os
 import datetime
-import unicodedata
-
-import six
 from ordered_set import OrderedSet
-
 from daily_query.constants import FOREVER
 
 
@@ -78,4 +73,4 @@ def parse_dates(days=None, days_from=None, days_to=None, reverse=True) \
 def isiterable(obj):
     """ Iterable, but not: string, dict """
     return hasattr(obj, '__iter__') and \
-        not isinstance(obj, six.string_types)
+        not isinstance(obj, str)

@@ -4,7 +4,15 @@
 Helpers for opinionated NoSQL queries that assumes that data is stored in collections named after the creation date. 
 Is a wrapper around major NoSQL engines.
 
-## Usage
+
+## Dev setup
+
+```shell
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+```
+
+## API playground
 
 ```python
 import pymongo

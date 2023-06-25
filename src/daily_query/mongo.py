@@ -338,8 +338,8 @@ class MongoDaily(PyMongo, base.NoSQLDaily):
 
             pipe = pipeline(collection) if \
                 not isiterable(pipeline) else pipeline
-            pipeline += [{"$limit": _limit}]
-            
+            pipe += [{"$limit": _limit}]
+
             cursor = collection.aggregate(pipe, *args, **kwargs)
             cursor_len = len(cursor._CommandCursor__data)           # FIXME: dirty hack
             yield (cursor, cursor_len, collection) \

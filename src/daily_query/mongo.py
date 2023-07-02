@@ -223,6 +223,14 @@ class Collection(PyMongo, base.Collection):
     def aggregate(self, *args, **kwargs):
         return self.collection.aggregate(*args, **kwargs)
 
+    def find_max(self, field, groupby, match):
+        """ Select documents with max value of a field """
+        max_ver = [
+            {'$match': match}, {'$sort': {groupby: 1, f"{field}": -1}},
+            {'$group': {'_id': f"${groupby}", 'doc_with_max_ver': {'$first': "$$ROOT"}}},
+            {'$replaceWith': "$doc_with_max_ver"}]
+        return self.aggregate(max_ver)
+
 
 class MongoDaily(PyMongo, base.NoSQLDaily):
     """
